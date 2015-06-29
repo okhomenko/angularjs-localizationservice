@@ -13,6 +13,7 @@ angular.module('localization', [])
     // managing the translation dictionary
     .provider('localize', function localizeProvider() {
 
+        this.autoload = true; // load resource on service instantiation or do it in other place
         this.languages = ['en-US'];
         this.defaultLanguage = 'en-US';
         this.ext = 'js';
@@ -20,7 +21,7 @@ angular.module('localization', [])
 
         var provider = this;
 
-        this.$get = ['$http', '$rootScope', '$window', '$filter', function ($http, $rootScope, $window, $filter) {
+        this.$get = ['$http', '$q', '$rootScope', '$window', '$filter', function ($http, $q, $rootScope, $window, $filter) {
 
             var localize = {
                 // use the $window service to get the language of the user's browser
@@ -95,13 +96,32 @@ angular.module('localization', [])
                 initLocalizedResources:function () {
                     // build the url to retrieve the localized resource file
                     var url = localize.url || localize.buildUrl(provider.baseUrl);
+                    
+                    // deferred for real and fallback promises
+                    var deferred = $q.defer();
+
                     // request the resource file
-                    $http({ method:"GET", url:url, cache:false }).success(localize.successCallback).error(function () {
-                        // the request failed set the url to the default resource file
-                        var url = provider.baseUrl + 'resources-locale_default' + '.' + provider.ext;
-                        // request the default resource file
-                        $http({ method:"GET", url:url, cache:false }).success(localize.successCallback);
-                    });
+                    // return promise, so we can use it in resolve functions in our routes
+                    $http({ method:"GET", url:url, cache:false })
+                        .success(function (data) {
+                            deferred.resolve(data);
+                            return localize.successCallback(data);
+                        })
+                        .error(function () {
+                            // the request failed set the url to the default resource file
+                            var url = provider.baseUrl + 'resources-locale_default' + '.' + provider.ext;
+                            // request the default resource file
+                            $http({ method:"GET", url:url, cache:false })
+                                .success(function (data) {
+                                    deferred.resolve(data);
+                                    return localize.successCallback(data);
+                                })
+                                .error(function (err) {
+                                    deferred.reject(err);
+                                });
+                        });
+                    
+                    return deferred.promise;
                 },
 
                 // checks the dictionary for a localized resource string
@@ -126,7 +146,7 @@ angular.module('localization', [])
             };
 
             // force the load of the resource file
-            localize.initLocalizedResources();
+            if (this.autoload) localize.initLocalizedResources();
 
             // return the local instance when called
             return localize;
